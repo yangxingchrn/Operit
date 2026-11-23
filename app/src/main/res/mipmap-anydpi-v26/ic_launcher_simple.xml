@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background_simple" />
-    <foreground android:drawable="@drawable/exo_icon_circular_play" />
-    <monochrome android:drawable="@drawable/exo_icon_circular_play" />
+    <foreground android:drawable="@drawable/ic_launcher_yunchen_play" />
+    <monochrome android:drawable="@drawable/ic_launcher_yunchen_play" />
 </adaptive-icon>

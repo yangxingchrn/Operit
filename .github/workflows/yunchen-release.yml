@@ -161,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --stacktrace --no-daemon
+          ./gradlew :app:assembleRelease -x signRotatedReleaseApk --stacktrace --no-daemon
 
       - name: Upload reports
         if: always()

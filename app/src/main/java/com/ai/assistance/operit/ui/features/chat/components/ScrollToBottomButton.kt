@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -49,31 +50,24 @@ fun ScrollToBottomButton(
     modifier: Modifier = Modifier
 ) {
     var showScrollButton by remember { mutableStateOf(false) }
-    val isDragged by scrollState.interactionSource.collectIsDraggedAsState()
-
-    LaunchedEffect(scrollState) {
-        var lastPosition = scrollState.value
-        snapshotFlow { scrollState.value }
+    val followThresholdPx = rememberChatFollowThresholdPx()
+    val latestAutoScrollToBottom by rememberUpdatedState(autoScrollToBottom)
+    // 核心滚动逻辑：按「距底未显示高度」判定，不再要求精确贴底
+    LaunchedEffect(scrollState, followThresholdPx, hasNewerDisplayHistory) {
+        snapshotFlow { scrollState.isScrollInProgress }
             .distinctUntilChanged()
-            .collect { currentPosition ->
-                if (scrollState.isScrollInProgress) {
-                    val scrolledUp = currentPosition < lastPosition
-                    if (scrolledUp) {
-                        if (autoScrollToBottom && isDragged) {
-                            onAutoScrollToBottomChange(false)
-                            showScrollButton = true
-                        }
-                    } else {
-                        val isAtBottom =
-                            scrollState.value >= scrollState.maxValue &&
-                                !hasNewerDisplayHistory
-                        if (isAtBottom && !autoScrollToBottom) {
-                            onAutoScrollToBottomChange(true)
-                            showScrollButton = false
-                        }
-                    }
+            .collect { inProgress ->
+                if (!inProgress) return@collect
+                val withinFollowThreshold =
+                    !hasNewerDisplayHistory &&
+                        scrollState.isWithinFollowThreshold(followThresholdPx)
+                if (!withinFollowThreshold && latestAutoScrollToBottom) {
+                    onAutoScrollToBottomChange(false)
+                    showScrollButton = true
+                } else if (withinFollowThreshold && !latestAutoScrollToBottom) {
+                    onAutoScrollToBottomChange(true)
+                    showScrollButton = false
                 }
-                lastPosition = currentPosition
             }
     }
 

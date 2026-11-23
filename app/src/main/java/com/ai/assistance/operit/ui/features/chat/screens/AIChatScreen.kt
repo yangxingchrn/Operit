@@ -659,6 +659,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     // 滚动状态
     var autoScrollToBottom by remember { mutableStateOf(true) }
+    val chatFollowThresholdPx = rememberChatFollowThresholdPx()
     val onAutoScrollToBottomChange = remember { { it: Boolean -> autoScrollToBottom = it } }
     val requestAutoScrollToBottom = remember { { autoScrollToBottom = true } }
     val imeBottomPx = WindowInsets.ime.getBottom(density)
@@ -673,11 +674,14 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             if (
                 latestAutoScrollToBottom &&
                     !latestHasNewerDisplayHistory &&
-                    !latestIsLoadingDisplayWindow
+                    !latestIsLoadingDisplayWindow &&
+                    !scrollState.isScrollInProgress &&
+                    scrollState.isWithinFollowThreshold(chatFollowThresholdPx)
             ) {
                 try {
                     if (latestChatHistory.isNotEmpty()) {
-                        scrollState.animateScrollTo(scrollState.maxValue)
+                        // 流式跟随用瞬时滚动：每 chunk 只差一两行，动画会被反复打断
+                        scrollState.scrollTo(scrollState.maxValue)
                     }
                 } catch (e: Exception) {
                     // AppLogger.e("AIChatScreen", "自动滚动失败", e)

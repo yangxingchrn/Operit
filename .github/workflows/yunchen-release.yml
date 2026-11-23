@@ -1,0 +1,183 @@
+name: YunChen Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      keystore_b64:
+        description: 'yunchen.jks 的 base64'
+        required: true
+      keystore_pass:
+        description: 'storePass / keyPass'
+        required: true
+      key_alias:
+        description: 'key alias'
+        required: true
+        default: 'yunchen'
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '21'
+  NODE_VERSION: '22'
+  ANDROID_NDK_VERSION: '25.1.8937393'
+  ANDROID_CMAKE_VERSION: '3.22.1'
+  ANDROID_API_LEVEL: '26'
+  RUST_VERSION: '1.88.0'
+  MANUAL_DEPS_DIR: manual-deps
+
+jobs:
+  build:
+    name: Build YunChen APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Initialize terminal submodule
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule sync -- terminal
+          git submodule update --init --recursive --depth 1 terminal
+          git submodule status -- terminal
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Install Android SDK, NDK and CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "platforms;android-36" \
+            "build-tools;34.0.0" \
+            "build-tools;35.0.0" \
+            "ndk;$ANDROID_NDK_VERSION" \
+            "cmake;$ANDROID_CMAKE_VERSION"
+
+      - name: Restore Android dependency cache
+        id: cache-manual-deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MANUAL_DEPS_DIR }}
+          key: android-full-deps-${{ runner.os }}-${{ hashFiles('ci/script/download_android_dependencies.sh', 'ci/script/prepare_android_dependencies.py') }}
+
+      - name: Download Android dependencies
+        if: steps.cache-manual-deps.outputs.cache-hit != 'true'
+        run: bash ci/script/download_android_dependencies.sh full "$MANUAL_DEPS_DIR"
+
+      - name: Prepare Android dependencies
+        run: |
+          python3 ci/script/prepare_android_dependencies.py \
+            --profile full \
+            --archives "$MANUAL_DEPS_DIR" \
+            --repository "$GITHUB_WORKSPACE"
+
+      - name: Build native ripgrep
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang"
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup target add --toolchain "$RUST_VERSION" aarch64-linux-android
+          cargo "+$RUST_VERSION" build \
+            --manifest-path tools/native_ripgrep/Cargo.toml \
+            --release \
+            --target aarch64-linux-android \
+            --locked
+          install -Dm755 \
+            tools/native_ripgrep/target/aarch64-linux-android/release/liboperit_ripgrep.so \
+            app/src/main/jniLibs/arm64-v8a/liboperit_ripgrep.so
+          test -s app/src/main/jniLibs/arm64-v8a/liboperit_ripgrep.so
+
+      - name: Install JavaScript dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g pnpm@10.34.5
+          npm ci --no-audit --no-fund
+          npm --prefix web-chat ci --no-audit --no-fund
+          npm --prefix annual-report ci --no-audit --no-fund
+
+      - name: Build WebChat assets
+        run: npm run build:webchat
+
+      - name: Build annual report assets
+        run: npm run build:annualreport
+
+      - name: Build bundled ToolPkg packages
+        run: |
+          npm run build:examples:github
+          python3 tools/example_packages/sync_example_packages.py --no-hot-reload
+
+      - name: Configure Android SDK and signing
+        shell: bash
+        env:
+          KS_B64: ${{ inputs.keystore_b64 }}
+          KS_PASS: ${{ inputs.keystore_pass }}
+          KS_ALIAS: ${{ inputs.key_alias }}
+        run: |
+          set -euo pipefail
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/yunchen.jks"
+          test -s "$RUNNER_TEMP/yunchen.jks"
+          {
+            echo "RELEASE_STORE_FILE=$RUNNER_TEMP/yunchen.jks"
+            echo "RELEASE_STORE_PASSWORD=$KS_PASS"
+            echo "RELEASE_KEY_ALIAS=$KS_ALIAS"
+            echo "RELEASE_KEY_PASSWORD=$KS_PASS"
+          } >> local.properties
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yunchen-reports-${{ github.run_number }}
+          path: |
+            app/build/reports/**
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yunchen-release-apk-${{ github.run_number }}
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14

@@ -63,6 +63,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -122,6 +123,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -280,6 +282,7 @@ fun ChatArea(
     var pendingJumpIsAutoFollow by remember(currentChatId) { mutableStateOf(false) }
     val isUserDragging by scrollState.interactionSource.collectIsDraggedAsState()
     val latestAutoScrollToBottom by rememberUpdatedState(autoScrollToBottom)
+    val followThresholdPx = rememberChatFollowThresholdPx()
     LaunchedEffect(isUserDragging) {
         // A drag gesture always wins over a queued auto-follow jump; otherwise the queued
         // jump fires right after the finger is lifted and snaps the list back to bottom.
@@ -287,6 +290,18 @@ fun ChatArea(
             pendingJumpToMessageTimestamp = null
             pendingJumpIsAutoFollow = false
         }
+    }
+    // 内容长高后若把底部甩出跟随阈值，停止跟随，位置留给用户自己
+    LaunchedEffect(scrollState, followThresholdPx) {
+        snapshotFlow { scrollState.maxValue }
+            .distinctUntilChanged()
+            .collect {
+                if (!latestAutoScrollToBottom) return@collect
+                if (isUserDragging || scrollState.isScrollInProgress) return@collect
+                if (!scrollState.isWithinFollowThreshold(followThresholdPx)) {
+                    onAutoScrollToBottomChange?.invoke(false)
+                }
+            }
     }
     val lastMessage = chatHistory.lastOrNull()
     val pendingTargetAnchor =
@@ -318,7 +333,12 @@ fun ChatArea(
                 onShowLatestDisplayWindow != null
         ) {
             onShowLatestDisplayWindow.invoke()
-        } else if (autoScrollToBottom && messagesCount > 0 && !isUserDragging) {
+        } else if (
+            autoScrollToBottom &&
+                messagesCount > 0 &&
+                !isUserDragging &&
+                scrollState.isWithinFollowThreshold(followThresholdPx)
+        ) {
             pendingJumpIsAutoFollow = true
             pendingJumpToMessageTimestamp = lastMessage?.timestamp
         }

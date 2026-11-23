@@ -386,27 +386,20 @@ internal fun ChatScrollNavigator(
         }
     }
 
-    LaunchedEffect(scrollState) {
-        var lastPosition = scrollState.value
-        snapshotFlow { scrollState.value }
+    val followThresholdPx = rememberChatFollowThresholdPx()
+    LaunchedEffect(scrollState, followThresholdPx) {
+        snapshotFlow { scrollState.isScrollInProgress }
             .distinctUntilChanged()
-            .collectLatest { currentPosition ->
-                if (scrollState.isScrollInProgress) {
-                    val movedAwayFromBottom = currentPosition < lastPosition
-                    if (movedAwayFromBottom) {
-                        if (currentAutoScrollToBottom) {
-                            currentOnAutoScrollToBottomChange?.invoke(false)
-                        }
-                    } else {
-                        val isAtBottom =
-                            scrollState.value >= scrollState.maxValue &&
-                                !currentHasNewerDisplayHistory
-                        if (isAtBottom && !currentAutoScrollToBottom) {
-                            currentOnAutoScrollToBottomChange?.invoke(true)
-                        }
-                    }
+            .collectLatest { inProgress ->
+                if (!inProgress) return@collectLatest
+                val withinFollowThreshold =
+                    !currentHasNewerDisplayHistory &&
+                        scrollState.isWithinFollowThreshold(followThresholdPx)
+                if (!withinFollowThreshold && currentAutoScrollToBottom) {
+                    currentOnAutoScrollToBottomChange?.invoke(false)
+                } else if (withinFollowThreshold && !currentAutoScrollToBottom) {
+                    currentOnAutoScrollToBottomChange?.invoke(true)
                 }
-                lastPosition = currentPosition
             }
     }
 

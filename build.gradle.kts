@@ -1,6 +1,8 @@
 buildscript {
     val objectboxVersion by extra("5.3.0")
     repositories {
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
         mavenCentral()
     }
     dependencies {
